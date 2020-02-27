@@ -1,4 +1,5 @@
 import numpy as np
+import torchvision
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,35 +11,83 @@ from DRL.critic import *
 from DRL.wgan import *
 from utils.util import *
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-coord = torch.zeros([1, 2, 128, 128])
-for i in range(128):
-    for j in range(128):
-        coord[0, 0, i, j] = i / 127.
-        coord[0, 1, i, j] = j / 127.
+width=256
+coord = torch.zeros([1, 2, width, width])
+for i in range(width):
+    for j in range(width):
+        coord[0, 0, i, j] = i*1.0 / width
+        coord[0, 1, i, j] = j*1.0 / width
 coord = coord.to(device)
 
 criterion = nn.MSELoss()
 
-Decoder = FCN()
-Decoder.load_state_dict(torch.load('../renderer.pkl'))
+# Decoder = FCN()
+# Decoder.load_state_dict(torch.load('../renderer.pkl'))
 
-def decode(x, canvas): # b * (10 + 3)
-    x = x.view(-1, 10 + 3)
-    stroke = 1 - Decoder(x[:, :10])
-    stroke = stroke.view(-1, 128, 128, 1)
-    color_stroke = stroke * x[:, -3:].view(-1, 1, 1, 3)
-    stroke = stroke.permute(0, 3, 1, 2)
-    color_stroke = color_stroke.permute(0, 3, 1, 2)
-    stroke = stroke.view(-1, 5, 1, 128, 128)
-    color_stroke = color_stroke.view(-1, 5, 3, 128, 128)
-    for i in range(5):
-        canvas = canvas * (1 - stroke[:, i]) + color_stroke[:, i]
-    return canvas
+# def decode(x, canvas): # b * (10 + 3)
+#     x = x.view(-1, 10 + 3)
+#     stroke = 1 - Decoder(x[:, :10])
+#     stroke = stroke.view(-1, 128, 128, 1)
+#     color_stroke = stroke * x[:, -3:].view(-1, 1, 1, 3)
+#     stroke = stroke.permute(0, 3, 1, 2)
+#     color_stroke = color_stroke.permute(0, 3, 1, 2)
+#     stroke = stroke.view(-1, 5, 1, 128, 128)
+#     color_stroke = color_stroke.view(-1, 5, 3, 128, 128)
+#     for i in range(5):
+#         canvas = canvas * (1 - stroke[:, i]) + color_stroke[:, i]
+#     return canvas
 
 def cal_trans(s, t):
     return (s.transpose(0, 3) * t).transpose(0, 3)
     
+class Actor(nn.Module):
+    """Actor (Policy) Model."""
+
+    def __init__(self, state_size, action_size, channels=None, classes=5):
+        super(Actor, self).__init__()
+        channels = state_size
+        # self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
+        # self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        # self.model.classifier = nn.Linear(1024, classes)
+        self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+        print(self.model)
+        self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        self.model.classifier[6] = nn.Linear(4096, classes)
+
+    def forward(self, states):
+        logits = self.model(states) 
+        output = torch.tanh(logits)
+        return output
+
+
+class Critic(nn.Module):
+    """Critic (Value) Model."""
+
+    def __init__(self, state_size, action_size, channels=None, classes=1, fc1_units=256, fc2_units=128):
+        super(Critic, self).__init__()
+        channels = state_size
+        # self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
+        # self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        # self.model.classifier = nn.Linear(1024, fc1_units)
+        self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+        print(self.model)
+        self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        self.model.classifier[6] = nn.Linear(4096, fc1_units)
+
+        self.fc1 = nn.Linear(state_size, fc1_units)
+        self.fc2 = nn.Linear(fc1_units+action_size, fc2_units)
+        self.fc3 = nn.Linear(fc2_units, classes)
+
+    def reset_parameters(self):
+        self.fc1.weight.data.uniform_(*hidden_init(self.fc1))
+        self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
+        self.fc3.weight.data.uniform_(-3e-3, 3e-3)
+
+    def forward(self, states, actions):
+        logits = self.model(states) 
+        output = F.relu(logits)
+        return output
+
 class DDPG(object):
     def __init__(self, batch_size=64, env_batch=1, max_step=40, \
                  tau=0.001, discount=0.9, rmsize=800, \
@@ -48,10 +97,14 @@ class DDPG(object):
         self.env_batch = env_batch
         self.batch_size = batch_size        
 
-        self.actor = ResNet(9, 18, 65) # target, canvas, stepnum, coordconv 3 + 3 + 1 + 2
-        self.actor_target = ResNet(9, 18, 65)
-        self.critic = ResNet_wobn(3 + 9, 18, 1) # add the last canvas for better prediction
-        self.critic_target = ResNet_wobn(3 + 9, 18, 1) 
+        # self.actor = ResNet(9, 18, 65) # target, canvas, stepnum, coordconv 3 + 3 + 1 + 2
+        # self.actor_target = ResNet(9, 18, 65)
+        # self.critic = ResNet_wobn(3 + 9, 18, 1) # add the last canvas for better prediction
+        # self.critic_target = ResNet_wobn(3 + 9, 18, 1) 
+        self.actor = Actor(10, 4) # target, canvas, stepnum, coordconv 3 + 3 + 1 + 2
+        self.actor_target = Actor(10, 4)
+        self.critic = Critic(3 + 10, 1) # add the last canvas for better prediction
+        self.critic_target = Critic(3 + 10, 1)
 
         self.actor_optim  = Adam(self.actor.parameters(), lr=1e-2)
         self.critic_optim  = Adam(self.critic.parameters(), lr=1e-2)
@@ -78,15 +131,18 @@ class DDPG(object):
         self.choose_device()        
 
     def play(self, state, target=False):
-        state = torch.cat((state[:, :6].float() / 255, state[:, 6:7].float() / self.max_step, coord.expand(state.shape[0], 2, 128, 128)), 1)
+        state = torch.cat((state[:, :7].float() / 255, 
+                           state[:, 7:8].float() / self.max_step, 
+                           coord.expand(state.shape[0], 2, width, width)), 1)
         if target:
             return self.actor_target(state)
         else:
             return self.actor(state)
 
     def update_gan(self, state):
-        canvas = state[:, :3]
-        gt = state[:, 3 : 6]
+        volume = state[:, 0:1]
+        canvas = state[:, 1:4]
+        gt = state[:, 4:7]
         fake, real, penal = update(canvas.float() / 255, gt.float() / 255)
         if self.log % 20 == 0:
             self.writer.add_scalar('train/gan_fake', fake, self.log)
@@ -94,14 +150,20 @@ class DDPG(object):
             self.writer.add_scalar('train/gan_penal', penal, self.log)       
         
     def evaluate(self, state, action, target=False):
-        T = state[:, 6 : 7]
-        gt = state[:, 3 : 6].float() / 255
-        canvas0 = state[:, :3].float() / 255
-        canvas1 = decode(action, canvas0)
+        # T = state[:, 6 : 7]
+        # gt = state[:, 3 : 6].float() / 255
+        # canvas0 = state[:, :3].float() / 255
+        # canvas1 = decode(action, canvas0)
+
+        T = state[:, 7:8]
+        gt = state[:, 4:7]
+        canvas0 = state[:, 1:4]
+        volume = state[:, 0:1]
+
         gan_reward = cal_reward(canvas1, gt) - cal_reward(canvas0, gt)
         # L2_reward = ((canvas0 - gt) ** 2).mean(1).mean(1).mean(1) - ((canvas1 - gt) ** 2).mean(1).mean(1).mean(1)        
-        coord_ = coord.expand(state.shape[0], 2, 128, 128)
-        merged_state = torch.cat([canvas0, canvas1, gt, (T + 1).float() / self.max_step, coord_], 1)
+        coord_ = coord.expand(state.shape[0], 2, width, width)
+        merged_state = torch.cat([canvas0 / 255, canvas1 / 255, gt / 255, (T + 1).float() / self.max_step, coord_], 1)
         # canvas0 is not necessarily added
         if target:
             Q = self.critic_target(merged_state)
@@ -213,7 +275,7 @@ class DDPG(object):
         self.critic_target.train()
     
     def choose_device(self):
-        Decoder.to(device)
+        # Decoder.to(device)
         self.actor.to(device)
         self.actor_target.to(device)
         self.critic.to(device)

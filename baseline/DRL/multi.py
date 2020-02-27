@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from env import Paint
 from utils.util import *
-from DRL.ddpg import decode
+# from DRL.ddpg import decode
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class fastenv():
