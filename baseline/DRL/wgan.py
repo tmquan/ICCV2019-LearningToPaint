@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torchvision
 import numpy as np
 from torch.optim import Adam, SGD
 from torch import autograd
@@ -10,7 +11,7 @@ import torch.nn.utils.weight_norm as weightNorm
 from utils.util import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-dim = 128
+width = 256
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 
 class TReLU(nn.Module):
@@ -31,11 +32,13 @@ class Discriminator(nn.Module):
             self.conv1 = weightNorm(nn.Conv2d(16, 32, 5, 2, 2))
             self.conv2 = weightNorm(nn.Conv2d(32, 64, 5, 2, 2))
             self.conv3 = weightNorm(nn.Conv2d(64, 128, 5, 2, 2))
-            self.conv4 = weightNorm(nn.Conv2d(128, 1, 5, 2, 2))
+            self.conv4 = weightNorm(nn.Conv2d(128, 256, 5, 2, 2))
+            self.conv5 = weightNorm(nn.Conv2d(256, 1, 5, 2, 2))
             self.relu0 = TReLU()
             self.relu1 = TReLU()
             self.relu2 = TReLU()
             self.relu3 = TReLU()
+            self.relu4 = TReLU()
 
         def forward(self, x):
             x = self.conv0(x)
@@ -47,9 +50,30 @@ class Discriminator(nn.Module):
             x = self.conv3(x)
             x = self.relu3(x)
             x = self.conv4(x)
+            x = self.relu4(x)
+            x = self.conv5(x)
             x = F.avg_pool2d(x, 4)
             x = x.view(-1, 1)
             return x
+
+# class Discriminator(nn.Module):
+#     """Actor (Policy) Model."""
+
+#     def __init__(self, state_size=6, action_size=4, channels=None, classes=1):
+#         super(Discriminator, self).__init__()
+#         channels = state_size
+#         self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
+#         self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+#         self.model.classifier = nn.Linear(1024, classes)
+#         # self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+#         # self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+#         # self.model.classifier[6] = nn.Linear(4096, classes)
+#         print(self.model)
+        
+#     def forward(self, states):
+#         logits = self.model(states) 
+#         output = torch.sigmoid(logits)
+#         return logits
 
 netD = Discriminator()
 target_netD = Discriminator()
@@ -61,9 +85,9 @@ optimizerD = Adam(netD.parameters(), lr=3e-4, betas=(0.5, 0.999))
 def cal_gradient_penalty(netD, real_data, fake_data, batch_size):
     alpha = torch.rand(batch_size, 1)
     alpha = alpha.expand(batch_size, int(real_data.nelement()/batch_size)).contiguous()
-    alpha = alpha.view(batch_size, 6, dim, dim)
+    alpha = alpha.view(batch_size, 6, width, width)
     alpha = alpha.to(device)
-    fake_data = fake_data.view(batch_size, 6, dim, dim)
+    fake_data = fake_data.view(batch_size, 6, width, width)
     interpolates = Variable(alpha * real_data.data + ((1 - alpha) * fake_data.data), requires_grad=True)
     disc_interpolates = netD(interpolates)
     gradients = autograd.grad(disc_interpolates, interpolates,

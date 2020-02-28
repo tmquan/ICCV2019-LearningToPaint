@@ -79,10 +79,10 @@ if __name__ == "__main__":
 
     # hyper-parameter
     parser.add_argument('--warmup', default=400, type=int, help='timestep without training but only filling the replay memory')
-    parser.add_argument('--discount', default=0.95**5, type=float, help='discount factor')
-    parser.add_argument('--batch_size', default=96, type=int, help='minibatch size')
-    parser.add_argument('--rmsize', default=800, type=int, help='replay memory size')
-    parser.add_argument('--env_batch', default=96, type=int, help='concurrent environment number')
+    parser.add_argument('--discount', default=0.95, type=float, help='discount factor')
+    parser.add_argument('--batch_size', default=32, type=int, help='minibatch size')
+    parser.add_argument('--rmsize', default=1024, type=int, help='replay memory size')
+    parser.add_argument('--env_batch', default=32, type=int, help='concurrent environment number')
     parser.add_argument('--tau', default=0.001, type=float, help='moving average for target network')
     parser.add_argument('--max_step', default=40, type=int, help='max length for episode')
     parser.add_argument('--noise_factor', default=0, type=float, help='noise level for parameter space noise')

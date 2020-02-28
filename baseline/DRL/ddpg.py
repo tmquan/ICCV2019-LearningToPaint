@@ -37,56 +37,65 @@ criterion = nn.MSELoss()
 #         canvas = canvas * (1 - stroke[:, i]) + color_stroke[:, i]
 #     return canvas
 
+def decode(action, volume, canvas):
+    action = action.unsqueeze(2).repeat(1, 1, width*width)
+    # print(action.shape, self.canvas.shape, self.volume.shape)
+    shape_canvas = canvas.shape
+    shape_volume = volume.shape
+    batch_size = shape_volume[0]
+    canvas = canvas.detach().reshape(batch_size, 3, -1).byte()
+
+    volume = volume.reshape(batch_size, 1, -1).byte()
+
+    # print(action.shape, canvas.shape, volume.shape)
+    Ivalue = (action[:,0:1] * 255).byte()
+    RGBvalue = (action[:,1:4] * 255).byte()
+    canvas[:,:] = torch.where(volume[:,:]==Ivalue, RGBvalue, canvas[:,:])
+
+    canvas = canvas.reshape(shape_canvas)
+    return canvas
+
 def cal_trans(s, t):
     return (s.transpose(0, 3) * t).transpose(0, 3)
     
 class Actor(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, channels=None, classes=5):
+    def __init__(self, state_size, action_size, channels=None, classes=4):
         super(Actor, self).__init__()
         channels = state_size
-        # self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
-        # self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        # self.model.classifier = nn.Linear(1024, classes)
-        self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+        self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
+        self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.model.classifier = nn.Linear(1024, classes)
+        # self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+        # self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        # self.model.classifier[6] = nn.Linear(4096, classes)
         print(self.model)
-        self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        self.model.classifier[6] = nn.Linear(4096, classes)
-
+        
     def forward(self, states):
         logits = self.model(states) 
-        output = torch.tanh(logits)
+        output = torch.sigmoid(logits)
         return output
 
 
 class Critic(nn.Module):
     """Critic (Value) Model."""
 
-    def __init__(self, state_size, action_size, channels=None, classes=1, fc1_units=256, fc2_units=128):
+    def __init__(self, state_size, action_size, channels=None, classes=1):
         super(Critic, self).__init__()
         channels = state_size
-        # self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
-        # self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        # self.model.classifier = nn.Linear(1024, fc1_units)
-        self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+        self.model = getattr(torchvision.models, 'densenet121')(pretrained=True)
+        self.model.features.conv0 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.model.classifier = nn.Linear(1024, classes)
+        # self.model = getattr(torchvision.models, 'vgg16')(pretrained=True)
+        # self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        # self.model.classifier[6] = nn.Linear(4096, classes)
         print(self.model)
-        self.model.features[0] = nn.Conv2d(channels, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        self.model.classifier[6] = nn.Linear(4096, fc1_units)
-
-        self.fc1 = nn.Linear(state_size, fc1_units)
-        self.fc2 = nn.Linear(fc1_units+action_size, fc2_units)
-        self.fc3 = nn.Linear(fc2_units, classes)
-
-    def reset_parameters(self):
-        self.fc1.weight.data.uniform_(*hidden_init(self.fc1))
-        self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
-        self.fc3.weight.data.uniform_(-3e-3, 3e-3)
-
-    def forward(self, states, actions):
+        
+    def forward(self, states):
         logits = self.model(states) 
-        output = F.relu(logits)
-        return output
+        output = torch.sigmoid(logits)
+        return logits
 
 class DDPG(object):
     def __init__(self, batch_size=64, env_batch=1, max_step=40, \
@@ -101,10 +110,10 @@ class DDPG(object):
         # self.actor_target = ResNet(9, 18, 65)
         # self.critic = ResNet_wobn(3 + 9, 18, 1) # add the last canvas for better prediction
         # self.critic_target = ResNet_wobn(3 + 9, 18, 1) 
-        self.actor = Actor(10, 4) # target, canvas, stepnum, coordconv 3 + 3 + 1 + 2
-        self.actor_target = Actor(10, 4)
-        self.critic = Critic(3 + 10, 1) # add the last canvas for better prediction
-        self.critic_target = Critic(3 + 10, 1)
+        self.actor = Actor(10, 4, classes=4) # target, canvas, stepnum, coordconv 3 + 3 + 1 + 2
+        self.actor_target = Actor(10, 4, classes=4)
+        self.critic = Critic(3 + 10, 4, classes=1) # add the last canvas for better prediction
+        self.critic_target = Critic(3 + 10, 4, classes=1)
 
         self.actor_optim  = Adam(self.actor.parameters(), lr=1e-2)
         self.critic_optim  = Adam(self.critic.parameters(), lr=1e-2)
@@ -155,15 +164,16 @@ class DDPG(object):
         # canvas0 = state[:, :3].float() / 255
         # canvas1 = decode(action, canvas0)
 
-        T = state[:, 7:8]
-        gt = state[:, 4:7]
-        canvas0 = state[:, 1:4]
-        volume = state[:, 0:1]
-
+        T = state[:, 7:8].float()
+        gt = state[:, 4:7].float()
+        canvas0 = state[:, 1:4].float()
+        volume = state[:, 0:1].float()
+        canvas1 = decode(action, volume, canvas0).float()
+        # print(canvas0, canvas1, gt)
         gan_reward = cal_reward(canvas1, gt) - cal_reward(canvas0, gt)
         # L2_reward = ((canvas0 - gt) ** 2).mean(1).mean(1).mean(1) - ((canvas1 - gt) ** 2).mean(1).mean(1).mean(1)        
         coord_ = coord.expand(state.shape[0], 2, width, width)
-        merged_state = torch.cat([canvas0 / 255, canvas1 / 255, gt / 255, (T + 1).float() / self.max_step, coord_], 1)
+        merged_state = torch.cat([canvas1 / 255, volume / 255, canvas0 / 255, gt / 255, (T + 1).float() / self.max_step, coord_], 1)
         # canvas0 is not necessarily added
         if target:
             Q = self.critic_target(merged_state)
